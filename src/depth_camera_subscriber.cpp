@@ -40,18 +40,20 @@ DepthCameraSubscriber::DepthCameraSubscriber()
     : Node("depth_camera_subscriber")
 {
  point_cloud_subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-    "/camera/right_camera/depth/color/points", rclcpp::SensorDataQoS(),
+    "/camera/right_camera/depth/color/points", rclcpp::SystemDefaultsQoS(),
     [this](const sensor_msgs::msg::PointCloud2::SharedPtr pc_in) {
         this->combined_callback(pc_in, nullptr); 
     });
 
 map_subscription_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-    "/map", rclcpp::SensorDataQoS(),
+    "/map", rclcpp::SystemDefaultsQoS(),
     [this](const nav_msgs::msg::OccupancyGrid::SharedPtr map_in) {
         this->combined_callback(nullptr, map_in); 
     });
 
-    point_cloud_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_projected", 10);
+    cloud_projected_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_projected", 10);
+    cloud_filtered_distance_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_filtered_distance_2d", 10);
+
     map_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("cloud_map_in", 10);
 }
 
@@ -97,15 +99,70 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
     sensor_msgs::msg::PointCloud2 output;
     pcl::toROSMsg(*cloud_projected, output); // convert PC to ROS message
     output.header = pc_in->header;
-    point_cloud_publisher_->publish(output);
+    cloud_projected_publisher_->publish(output);
+
+ 
+
+// removed points which are mor ethan 3 meters far away
+PointCloudT::Ptr cloud_filtered_distance_2d(new PointCloudT);
+float max_distance_threshold_2d = 1.5; // distance from camera
+
+for (const pcl::PointXYZ &point : cloud_projected->points)
+{
+  float distance_2d = std::sqrt(point.x * point.x + point.y * point.y);
+
+  if (distance_2d <= max_distance_threshold_2d)
+  {
+    cloud_filtered_distance_2d->push_back(point);
+  }
+}
+//sensor_msgs::msg::PointCloud2 output;
+pcl::toROSMsg(*cloud_filtered_distance_2d, output); // convert PC to ROS message
+output.header = pc_in->header;
+cloud_filtered_distance_publisher_->publish(output);
+
+
+
+
+
+
 
  }
 
 // working on map
+
+if (map_in != nullptr) {
+    std::cout << "Received map data with width: " << map_in->info.width << std::endl;
+} else {
+    std::cout << "Received null map data" << std::endl;
+}
+
+if (map_publisher_) {
+    std::cout << "map_publisher_ is valid" << std::endl;
+} else {
+    std::cout << "map_publisher_ is null" << std::endl;
+} 
+
 if (map_in != nullptr){
 saveMapAsPGM(map_in);
-std::cout <<"map is saved"<< std::endl;
-}
+nav_msgs::msg::OccupancyGrid map_msg;
+//map_msg.header = map_in->header;
+map_msg.header.frame_id = "my_map_frame";
+map_msg.info = map_in->info;
+map_msg.data = map_in-> data;
+map_publisher_ ->publish(map_msg);  
+}  
+
+if (map_in != nullptr) {
+        // Print map data
+        for (size_t i = 0; i < map_in->data.size(); ++i) {
+            std::cout << map_in->data[i] << " ";
+            if ((i + 1) % map_in->info.width == 0) {
+                std::cout << std::endl; // Start a new row for visualization
+            }
+        }
+    }
+
 
  
 
@@ -140,9 +197,10 @@ std::cout <<"map is saved"<< std::endl;
         output.header = pc_in->header;
         publisher_->publish(output);
 
-
     std::cout << "\nfile with filter out 3 meters has  "
                 << " (" << cloud_filtered_1->size() << " points) " << std::endl;
+
+
 
 
      // find min and max points
@@ -197,7 +255,7 @@ std::cout <<"map is saved"<< std::endl;
 
 
 void DepthCameraSubscriber::saveMapAsPGM(const nav_msgs::msg::OccupancyGrid::SharedPtr map_msg) {
-    std::ofstream pgm_file("src/depth_camera_subscriber/param/map_in2.pgm", std::ios::out | std::ios::binary);
+    std::ofstream pgm_file("src/depth_camera_subscriber/param/map.pgm", std::ios::out | std::ios::binary);
 
     if (pgm_file.is_open()) {
         pgm_file << "P5\n"; // Magic number for PGM binary format
@@ -210,7 +268,7 @@ void DepthCameraSubscriber::saveMapAsPGM(const nav_msgs::msg::OccupancyGrid::Sha
         }
 
         pgm_file.close();
-        std::cout << "Map saved as map_in2.pgm" << std::endl;
+        std::cout << "Map saved as map.pgm" << std::endl;
     } else {
         std::cerr << "Error: Unable to open file for writing." << std::endl;
     }
