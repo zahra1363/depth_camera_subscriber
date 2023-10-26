@@ -35,61 +35,73 @@
 #include <tf2/LinearMath/Transform.h>
 #include "pcl/common/transforms.h"
 
-
 typedef pcl::PointXYZ PointT;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudT;
 class DepthCameraSubscriber : public rclcpp::Node
 {
 public:
-    DepthCameraSubscriber();
-    void combined_callback(const sensor_msgs::msg::PointCloud2::SharedPtr pc_in, const nav_msgs::msg::OccupancyGrid::SharedPtr map_in);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr removeGround(const pcl::PointCloud<pcl::PointXYZ>::Ptr &inputCloud, float minYValue);
-    void saveMapAsPGM(const nav_msgs::msg::OccupancyGrid::SharedPtr map_msg);
-    std::array<float, 2> calculateMapOriginInPixel(const std::array<float, 2>& origin, float resolution, const std::array<int, 2>& image_size);
-    std::array<float, 2> calculatePointPixelValue(const std::array<float, 2>& position, const std::array<float, 2>& map_origin_pixel, float resolution);
-    void get_transformed_cloud(pcl::PointCloud<PointT>::Ptr cloud_filtered, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform & transform);
-bool findTransformation(std::string current_frame_id, std::string destination_frame_id, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform & transform);
-void getTransformedCloud(pcl::PointCloud<PointT>::Ptr cloud_output, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform  & transform);
+  DepthCameraSubscriber();
+  void combined_callback(const sensor_msgs::msg::PointCloud2::SharedPtr pc_in, const nav_msgs::msg::OccupancyGrid::SharedPtr map_in);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr removeGround(const pcl::PointCloud<pcl::PointXYZ>::Ptr &inputCloud, float minYValue);
+  void saveMapAsPGM(const nav_msgs::msg::OccupancyGrid::SharedPtr map_msg, std::string file_path);
 
+  std::array<float, 2> calculateMapOriginInPixel(const std::array<float, 2> &origin, float resolution, const std::array<int, 2> &image_size);
+  bool findTransformation(std::string current_frame_id, std::string destination_frame_id, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform);
+  void getTransformedCloud(pcl::PointCloud<PointT>::Ptr cloud_output, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform);
+  std::array<float, 2> calculatePointPixelValue(const Eigen::Vector3f &position, const std::array<float, 2> &origin, float resolution);
 
+void convert1DArrayTo2DImage(const pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud_transformed_member_);
+
+nav_msgs::msg::OccupancyGrid subtractPointCloudFromMap_1(const pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud);
+
+std::vector<int8_t> loadOccupancyGrid(const std::string &file_path, int &width, int &height);
+std::vector<std::vector<int8_t>> convertTo2D(const std::vector<int8_t>& occupancy_grid, int map_width, int map_height) ;
+
+std::vector<std::vector<int8_t>> occupancyGridTo2DImage(const nav_msgs::msg::OccupancyGrid::SharedPtr& map_msg);
+
+float findNearestOccupiedDistance_1(const std::vector<std::vector<int8_t>>& map_2d, int x, int y, int map_2d_width, int map_2d_height);
+
+nav_msgs::msg::OccupancyGrid comparePointCloudWithMap(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) ;
+void findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
 
 
 
 
 
 private:
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscription_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_projected_publisher_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_filtered_distance_publisher_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_transformed_publisher_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_in_publisher_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_output_publisher_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscription_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_projected_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_filtered_distance_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_transformed_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_in_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_transformed_member_publisher_;
 
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscription_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr modified_map_publisher_;
 
-    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscription_;
-    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
-    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr modified_map_publisher_;
-
-
-    rclcpp::TimerBase::SharedPtr timer_;
-   nav_msgs::msg::OccupancyGrid map_output;
-    bool map_data_set = false;
-   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_output RCPPUTILS_TSA_GUARDED_BY(lock_);
-   
-
-   
- 
-   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
- geometry_msgs::msg::Transform transform;
- std::mutex lock_;
-bool is_transformed = false;
-bool continue_callback = true;
+  rclcpp::TimerBase::SharedPtr timer_;
+  nav_msgs::msg::OccupancyGrid::SharedPtr map_in_;
   
+  bool map_data_set = false;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered_member_ RCPPUTILS_TSA_GUARDED_BY(lock_);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_transformed_member_;
 
- size_t count_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  geometry_msgs::msg::Transform transform;
+  std::mutex lock_;
+  bool is_transformed = false;
+  bool continue_callback = true;
 
-   
+  std::array<int, 2> map_size;
+  int map_width;
+  int map_height;
+  float resolution;
+  std::array<float, 2> origin_pixel;
+
+  size_t count_;
+  rclcpp::Rate rate{2};
 };
 
 #endif
