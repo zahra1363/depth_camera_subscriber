@@ -35,6 +35,10 @@
 #include <tf2/LinearMath/Transform.h>
 #include "pcl/common/transforms.h"
 
+#include <vector>
+//#include "gnuplot-iostream.h"
+
+
 typedef pcl::PointXYZ PointT;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudT;
 class DepthCameraSubscriber : public rclcpp::Node
@@ -50,19 +54,23 @@ public:
   void getTransformedCloud(pcl::PointCloud<PointT>::Ptr cloud_output, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform);
   std::array<float, 2> calculatePointPixelValue(const Eigen::Vector3f &position, const std::array<float, 2> &origin, float resolution);
 
-void convert1DArrayTo2DImage(const pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud_transformed_member_);
+//void convert1DArrayTo2DImage(const pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud_transformed_member_);
 
-nav_msgs::msg::OccupancyGrid subtractPointCloudFromMap_1(const pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud);
+//std::vector<int8_t> loadOccupancyGrid(const std::string &file_path, int &width, int &height);
+//std::vector<std::vector<int8_t>> convertTo2D(const std::vector<int8_t>& occupancy_grid, int map_width, int map_height) ;
 
-std::vector<int8_t> loadOccupancyGrid(const std::string &file_path, int &width, int &height);
-std::vector<std::vector<int8_t>> convertTo2D(const std::vector<int8_t>& occupancy_grid, int map_width, int map_height) ;
-
-std::vector<std::vector<int8_t>> occupancyGridTo2DImage(const nav_msgs::msg::OccupancyGrid::SharedPtr& map_msg);
-
-float findNearestOccupiedDistance_1(const std::vector<std::vector<int8_t>>& map_2d, int x, int y, int map_2d_width, int map_2d_height);
+//std::vector<std::vector<int8_t>> occupancyGridTo2DImage(const nav_msgs::msg::OccupancyGrid::SharedPtr& map_msg);
 
 nav_msgs::msg::OccupancyGrid comparePointCloudWithMap(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) ;
-void findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
+std::vector<float> findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
+void writeDistancesToFile(const std::vector<float> & distances) ;
+
+void timerCallback();  
+
+bool hasObject(const nav_msgs::msg::OccupancyGrid& map, int threshold);
+
+bool compareOccupancyGrids(const nav_msgs::msg::OccupancyGrid& grid1, const nav_msgs::msg::OccupancyGrid& grid2, int threshold);
+void printOccupiedPointsCount(const nav_msgs::msg::OccupancyGrid& occupancy_grid);
 
 
 
@@ -79,8 +87,8 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscription_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr modified_map_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr buffer_modified_map_publisher_;
 
-  rclcpp::TimerBase::SharedPtr timer_;
   nav_msgs::msg::OccupancyGrid::SharedPtr map_in_;
   
   bool map_data_set = false;
@@ -101,7 +109,15 @@ private:
   std::array<float, 2> origin_pixel;
 
   size_t count_;
-  rclcpp::Rate rate{2};
+  rclcpp::Rate rate{2}; //calls callback 2 times per second
+
+
+  std::deque<nav_msgs::msg::OccupancyGrid> modified_map_buffer;
+  int buffer_size = 2;  
+
+  rclcpp::TimerBase::SharedPtr timer_; 
+
+
 };
 
 #endif

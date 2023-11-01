@@ -35,6 +35,8 @@ find_package(tf2_eigen REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
 
+
+
 include_directories(
   include
   ${PCL_INCLUDE_DIRS}
@@ -72,8 +74,9 @@ src/depth_camera_subscriber_node.cpp
 )
 
 target_link_libraries (depth_camera_subscriber
-#depth_camera_library
-${PCL_LIBRARIES})
+${PCL_LIBRARIES}
+
+)
 
 
 ament_target_dependencies(depth_camera_subscriber
@@ -88,7 +91,6 @@ ament_target_dependencies(depth_camera_subscriber
 
 
 install(TARGETS depth_camera_subscriber
-#depth_camera_library
   DESTINATION lib/${PROJECT_NAME})
 
 
