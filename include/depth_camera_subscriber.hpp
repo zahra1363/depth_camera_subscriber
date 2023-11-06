@@ -70,7 +70,6 @@ void timerCallback();
 bool hasObject(const nav_msgs::msg::OccupancyGrid& map, int threshold);
 
 bool compareOccupancyGrids(const nav_msgs::msg::OccupancyGrid& grid1, const nav_msgs::msg::OccupancyGrid& grid2, int threshold);
-void printOccupiedPointsCount(const nav_msgs::msg::OccupancyGrid& occupancy_grid);
 
 
 

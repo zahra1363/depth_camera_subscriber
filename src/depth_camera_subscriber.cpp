@@ -508,10 +508,8 @@ void DepthCameraSubscriber::timerCallback()
     {
         nav_msgs::msg::OccupancyGrid modified_map;
         modified_map = comparePointCloudWithMap(cloud_transformed_member_);
-      // int min_object_pixels = 100;
-      //  bool has_object = hasObject(modified_map, min_object_pixels);
-
-       printOccupiedPointsCount(modified_map);
+       int min_object_pixels = 20;
+      bool has_object = hasObject(modified_map, min_object_pixels);
 
         if (modified_map_buffer.size() < buffer_size)
         {
@@ -553,20 +551,23 @@ void DepthCameraSubscriber::timerCallback()
 }
 
 
-bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid& map, int threshold) {
-    int count = 0;
-    for(auto data : map.data) 
+bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid& occupancy_grid, int threshold) {
+    int occupied_count = 0;
+     for (int i = 0; i < occupancy_grid.data.size(); ++i)
     {
-        if (data == 100) {
-            count++;
-        }
-        if (count >= threshold) {
-          std::cout<<" map with object"<<std::endl;
-            return true; // Found enough cells with value 100
+        if (occupancy_grid.data[i] == 100)
+        {
+            occupied_count++;
         }
     }
-              std::cout<<" empty map "<<std::endl;
-    return false; // Didn't find enough cells with value 100
+        if (occupied_count >= threshold) {
+          
+          std::cout<<" map has an object with " << occupied_count << " pixels. " << std::endl;
+            return true; 
+        }
+    
+              std::cout<<" empty is map with "<< occupied_count << " pixels. " << std::endl;
+                  return false; 
 }
 
 
@@ -579,12 +580,16 @@ bool DepthCameraSubscriber::compareOccupancyGrids(const nav_msgs::msg::Occupancy
 
     int counter = 0;
 
-    for (int i = 0; i < grid1.data.size(); ++i)
+    for (int i = 1; i < grid1.info.width - 1; ++i)
+  {
+    for (int j = 1; j < grid1.info.height - 1; ++j)
     {
-        if (grid1.data[i] == 100)
+          int index_1 = grid1.info.width * j + i;
+
+        if (grid1.data[index_1] == 100)
         {
-            int x = i % grid1.info.width;
-            int y = grid1.info.height - (i / grid1.info.width) - 1;
+            int x = i;
+            int y = grid1.info.height - j - 1;
 
             bool foundOccupied = false;
 
@@ -597,10 +602,9 @@ bool DepthCameraSubscriber::compareOccupancyGrids(const nav_msgs::msg::Occupancy
 
                     if (nx >= 0 && nx < grid2.info.width && ny >= 0 && ny < grid2.info.height)
                     {
-                       // int index = grid2.info.width * ny + nx;
-                       int index = grid2.info.width * (grid2.info.height - ny - 1) + nx;
+                       int index_2 = grid2.info.width * (grid2.info.height - ny - 1) + nx;
 
-                        if (grid2.data[index] == 100)
+                        if (grid2.data[index_2] == 100)
                         {
                             foundOccupied = true;
                             break;
@@ -619,24 +623,12 @@ bool DepthCameraSubscriber::compareOccupancyGrids(const nav_msgs::msg::Occupancy
             }
         }
     }
+  }
     std::cout<< "number of common pixels is :  "<< counter<< std::endl;
     return counter > threshold;
 }
 
-void DepthCameraSubscriber::printOccupiedPointsCount(const nav_msgs::msg::OccupancyGrid& occupancy_grid)
-{
-    int occupied_count = 0;
 
-    for (int i = 0; i < occupancy_grid.data.size(); ++i)
-    {
-        if (occupancy_grid.data[i] == 100)
-        {
-            occupied_count++;
-        }
-    }
-
-    std::cout << "Number of occupied points: " << occupied_count << std::endl;
-}
 
 
 
