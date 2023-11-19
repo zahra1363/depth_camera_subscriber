@@ -61,13 +61,14 @@ public:
 
 //std::vector<std::vector<int8_t>> occupancyGridTo2DImage(const nav_msgs::msg::OccupancyGrid::SharedPtr& map_msg);
 
-nav_msgs::msg::OccupancyGrid comparePointCloudWithMap(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) ;
+nav_msgs::msg::OccupancyGrid objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) ;
 std::vector<float> findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
 void writeDistancesToFile(const std::vector<float> & distances) ;
 
 void timerCallback();  
 
 bool hasObject(const nav_msgs::msg::OccupancyGrid& map, int threshold);
+
 
 bool compareOccupancyGrids(const nav_msgs::msg::OccupancyGrid& grid1, const nav_msgs::msg::OccupancyGrid& grid2, int threshold);
 
@@ -77,13 +78,15 @@ bool compareOccupancyGrids(const nav_msgs::msg::OccupancyGrid& grid1, const nav_
 
 private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_subscription_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscription_;
+
+
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_projected_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_filtered_distance_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_transformed_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_in_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_transformed_member_publisher_;
 
-  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscription_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr modified_map_publisher_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr buffer_modified_map_publisher_;
