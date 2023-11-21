@@ -32,6 +32,7 @@
 #include <pcl/filters/extract_indices.h>
 
 #include "nav_msgs/msg/occupancy_grid.hpp"
+#include <geometry_msgs/msg/point.hpp>
 
 typedef pcl::PointXYZ PointT;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudT;
@@ -53,7 +54,7 @@ DepthCameraSubscriber::DepthCameraSubscriber()
         this->combined_callback(nullptr, map_in);
       });
 
-  timer_ = this->create_wall_timer(std::chrono::minutes(1), std::bind(&DepthCameraSubscriber::timerCallback, this));
+ // timer_ = this->create_wall_timer(std::chrono::minutes(1), std::bind(&DepthCameraSubscriber::timerCallback, this));
 
   cloud_in_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("point_cloud_in", rclcpp::SensorDataQoS());
   cloud_projected_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_projected", rclcpp::SensorDataQoS());
@@ -70,7 +71,7 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
 {
   if (pc_in != nullptr)
   {
-    std::cout << "pc_in is loaded" << std::endl;
+   //std::cout << "pc_in is loaded" << std::endl;
     sensor_msgs::msg::PointCloud2 output;
     output.header = pc_in->header;
 
@@ -166,7 +167,7 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
     is_transformed = findTransformation(current_frame_id, destination_frame_id, cloud_transformed, transform);
     if (continue_callback)
     {
-      std::cout << "point cloud is transformed to the map frame" << std::endl;
+     // std::cout << "point cloud is transformed to the map frame" << std::endl;
       *cloud_transformed_member_ = *cloud_transformed;
 
       sensor_msgs::msg::PointCloud2 output_2;
@@ -194,6 +195,13 @@ writeDistancesToFile(distances);
 
 
 
+   
+
+    
+
+   
+
+    
 
 
 
@@ -213,6 +221,12 @@ writeDistancesToFile(distances);
 
 
 
+
+
+
+
+
+timerCallback();
 
 
 
@@ -229,13 +243,85 @@ writeDistancesToFile(distances);
 
 
 
+void DepthCameraSubscriber::timerCallback()
+{
+    if (map_data_set)
+    {
+        nav_msgs::msg::OccupancyGrid modified_map;
+        modified_map = objectDetection(cloud_transformed_member_);
+        int min_object_pixels = 10;
+        bool has_object = hasObject(modified_map, min_object_pixels);
 
+        if (modified_map_buffer_.size() < buffer_size)
+        {
+            modified_map_buffer_.push_back(modified_map);
+            buffer_modified_map_publisher_->publish(modified_map);
+        }
+        else
+        {
+            modified_map_buffer_.pop_front();
+            modified_map_buffer_.push_back(modified_map);
+            buffer_modified_map_publisher_->publish(modified_map);
+        }
 
+        //std::cout << "Modified_map added to the buffer" << std::endl;
 
+        if (modified_map_buffer_.size() >= 2)
+        {
+            const nav_msgs::msg::OccupancyGrid &modified_map_1 = modified_map_buffer_[0];
+            const nav_msgs::msg::OccupancyGrid &modified_map_2 = modified_map_buffer_[1];
 
+            int min_common_pixels = 8;
+            bool result = compareOccupancyGrids(modified_map_1, modified_map_2, min_common_pixels);
 
+            if (result)
+            {
+                if (timer_stamp_.seconds() == 0)
+                {
+                  counts_.push_back(1);
 
+                    // First time the object is seen, update the timer_stamp
+                    timer_stamp_ = this->now();
+                    std::cout << "First time object is seen. Timer started." << std::endl;
+                }
+                else
+                {
+                    rclcpp::Duration time_difference = this->now() - timer_stamp_;
+                    if (time_difference.seconds() >= 60)
+                    {
+                        // Object is seen after at least 60 seconds, update count
+                        counts_.push_back(1);
+                        std::cout << "1 added to count" << std::endl;
+                        // Reset timer_stamp
+                        timer_stamp_ = this->now();
+                    }
+                    else
+                    {
+                        std::cout << "Object seen again within 60 seconds. Ignoring." << std::endl;
+                    }
+                }
+            }
+            else
+            {
+                
+                if (!counts_.empty() && !has_object)
+                {
+                    handleObjectAppearance(counts_);
+                    counts_.clear();        // Reset counts_ for the next object
+                    timer_stamp_ = rclcpp::Time(0, 0);     // reset the time_stamp
+                    modified_map_buffer_.clear();
+                }
+            }
 
+              // Object is continuously visible for more than 2 hours
+            if (counts_.size() >= 6 )
+            {
+                std::cout << "Object continuously visible for more than. Running handle function." << std::endl;
+                handleObjectAppearance(counts_);
+            }
+        }
+    }
+}
 
 
 
@@ -361,7 +447,7 @@ std::array<float, 2> DepthCameraSubscriber::calculatePointPixelValue(const Eigen
 
 
 
-nav_msgs::msg::OccupancyGrid DepthCameraSubscriber::objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
+std::pair<nav_msgs::msg::OccupancyGrid, geometry_msgs::msg::Point> DepthCameraSubscriber::objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
 {
   /**
   // print out the map element
@@ -425,8 +511,10 @@ nav_msgs::msg::OccupancyGrid DepthCameraSubscriber::objectDetection(const pcl::P
       }
     }
   }
+  geometry_msgs::msg::Point object_centroid = calculateCentroid(modified_map);
+  //std::cout <<"object centroid is (" << object_centroid.x << ", " << object_centroid.y << " )" << std::endl;
 
-  return modified_map;
+  return std::make_pair(modified_map, object_centroid);
 }
 
 
@@ -501,58 +589,6 @@ void DepthCameraSubscriber::writeDistancesToFile(const std::vector<float> & dist
 
 
 
-// This function will be called every 15 minutes
-void DepthCameraSubscriber::timerCallback()
-{
-    if (map_data_set)
-    {
-        nav_msgs::msg::OccupancyGrid modified_map;
-        modified_map = objectDetection(cloud_transformed_member_);
-       int min_object_pixels = 10;
-      bool has_object = hasObject(modified_map, min_object_pixels);
-
-        if (modified_map_buffer.size() < buffer_size)
-        {
-            modified_map_buffer.push_back(modified_map);
-            buffer_modified_map_publisher_->publish(modified_map);
-
-        }
-        else
-        {
-            modified_map_buffer.pop_front();
-            modified_map_buffer.push_back(modified_map);
-             buffer_modified_map_publisher_->publish(modified_map);
-        }
-    }
-        RCLCPP_INFO(this->get_logger(), "Modified map added to buffer. Buffer size: %d", modified_map_buffer.size());
-
-
-
-  if (modified_map_buffer.size() >= 2) {
-    const nav_msgs::msg::OccupancyGrid& modified_map_1 = modified_map_buffer[0];
-    const nav_msgs::msg::OccupancyGrid& modified_map_2 = modified_map_buffer[1];
-
-       int  min_commmon_pixels = 8;
-       // bool result = compareOccupancyGrids(modified_map_1, modified_map_2,min_commmon_pixels );
-
-       bool result = compareOccupancyGrids(modified_map_1, modified_map_2,min_commmon_pixels );
-
-        if (result)
-          {
-              std::cout << "The objects are located in the same place in both maps." << std::endl;
-          }
-        else
-         {
-            std::cout << "The objects are not located in the same place in both maps." << std::endl;
-         }
-  }
-  else {
-    std::cout << "Not enough maps in the buffer for comparison." << std::endl;
-}
-
-}
-
-
 bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid& occupancy_grid, int threshold) {
     int occupied_count = 0;
      for (int i = 0; i < occupancy_grid.data.size(); ++i)
@@ -564,11 +600,11 @@ bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid& occupa
     }
         if (occupied_count >= threshold) {
           
-          std::cout<<" map has an object with " << occupied_count << " pixels. " << std::endl;
+          std::cout<<"Map has an object with " << occupied_count << " pixels. " << std::endl;
             return true; 
         }
     
-              std::cout<<" map is empty with "<< occupied_count << " pixels. " << std::endl;
+              std::cout<<"Map with " << occupied_count << " pixels " << "is considered empty." <<std::endl;
                   return false; 
 }
 
@@ -702,14 +738,76 @@ bool DepthCameraSubscriber::compareOccupancyGrids(const nav_msgs::msg::Occupancy
     std::cout << "Occupied pixels in grid1: " << occupied_count_grid1 << std::endl;
     std::cout << "Occupied pixels in grid2: " << occupied_count_grid2 << std::endl;
     std::cout << "Number of common pixels is: " << counter << std::endl;
+    std::cout << "----------------------------------------------------------------------- " << std::endl;
+
 
     return counter > threshold;
 }
 
 
+void DepthCameraSubscriber::handleObjectAppearance(const std::vector<int> &counts)
+    {
+
+        for (size_t i = 0; i < counts.size(); ++i)
+    {
+        RCLCPP_INFO(this->get_logger(), "Count[%zu]: %d", i, counts[i]);
+    }
+
+        int total_count = 0;
+        for (const auto &count : counts)
+        {
+            total_count += count;
+        }
+
+        // Make decisions based on the total count
+        if (total_count == 1 )
+        {
+            // Object seen for 15 minutes, consider it as people
+            RCLCPP_INFO(this->get_logger(), "Object identified as people.");
+        }
+        else if (total_count ==3 )
+        {
+            // Object seen for less than 30 minutes, consider it as trolley
+            RCLCPP_INFO(this->get_logger(), "Object identified as trolley.");
+        }
+        else if (total_count >= 6)
+        {
+            // Object seen for 2 hours, trigger map update
+            RCLCPP_INFO(this->get_logger(), "Object seen for 1.5 hours, triggering map update.");
+           
+        }
+    }
 
 
+geometry_msgs::msg::Point DepthCameraSubscriber::calculateCentroid(const nav_msgs::msg::OccupancyGrid &map)
+{
+  geometry_msgs::msg::Point centroid;
+  int totalOccupiedCells = 0;
+  float sumX = 0.0;
+  float sumY = 0.0;
 
+  for (int y = 0; y < map.info.height; ++y)
+  {
+    for (int x = 0; x < map.info.width; ++x)
+    {
+      int index = map.info.width * y + x;
+      if (map.data[index] == 100) // Check if cell is occupied
+      {
+        sumX += x;
+        sumY += y;
+        ++totalOccupiedCells;
+      }
+    }
+  }
+
+  if (totalOccupiedCells > 0)
+  {
+    centroid.x = sumX / totalOccupiedCells;
+    centroid.y = sumY / totalOccupiedCells;
+  }
+
+  return centroid;
+}
 
 
 

@@ -72,6 +72,12 @@ bool hasObject(const nav_msgs::msg::OccupancyGrid& map, int threshold);
 
 bool compareOccupancyGrids(const nav_msgs::msg::OccupancyGrid& grid1, const nav_msgs::msg::OccupancyGrid& grid2, int threshold);
 
+void handleObjectAppearance(const std::vector<int> &counts);
+
+geometry_msgs::msg::Point calculateCentroid(const nav_msgs::msg::OccupancyGrid &map);
+
+
+
 
 
 
@@ -111,13 +117,16 @@ private:
   std::array<float, 2> origin_pixel;
 
   size_t count_;
-  rclcpp::Rate rate{2}; //calls callback 2 times per second
+  rclcpp::Rate rate{1}; //calls callback 2 times per second
 
 
-  std::deque<nav_msgs::msg::OccupancyGrid> modified_map_buffer;
+  std::deque<nav_msgs::msg::OccupancyGrid> modified_map_buffer_;
   int buffer_size = 2;  
 
   rclcpp::TimerBase::SharedPtr timer_; 
+
+     rclcpp::Time timer_stamp_;
+    std::vector<int> counts_;
 
 
 };
