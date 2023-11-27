@@ -199,32 +199,6 @@ writeDistancesToFile(distances);
 
     
 
-   
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 timerCallback();
 
@@ -250,7 +224,7 @@ void DepthCameraSubscriber::timerCallback()
         nav_msgs::msg::OccupancyGrid modified_map;
         modified_map = objectDetection(cloud_transformed_member_);
         int min_object_pixels = 10;
-        bool has_object = hasObject(modified_map, min_object_pixels);
+        //bool has_object = hasObject(modified_map, min_object_pixels);
 
         if (modified_map_buffer_.size() < buffer_size)
         {
@@ -447,7 +421,7 @@ std::array<float, 2> DepthCameraSubscriber::calculatePointPixelValue(const Eigen
 
 
 
-std::pair<nav_msgs::msg::OccupancyGrid, geometry_msgs::msg::Point> DepthCameraSubscriber::objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
+nav_msgs::msg::OccupancyGrid DepthCameraSubscriber::objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
 {
   /**
   // print out the map element
@@ -512,9 +486,11 @@ std::pair<nav_msgs::msg::OccupancyGrid, geometry_msgs::msg::Point> DepthCameraSu
     }
   }
   geometry_msgs::msg::Point object_centroid = calculateCentroid(modified_map);
-  //std::cout <<"object centroid is (" << object_centroid.x << ", " << object_centroid.y << " )" << std::endl;
+  std::cout <<"Object centroid is (" << object_centroid.x << ", " << object_centroid.y << ")" << std::endl;
 
-  return std::make_pair(modified_map, object_centroid);
+
+ // return std::make_pair(modified_map, object_centroid);
+ return modified_map;
 }
 
 
@@ -765,7 +741,7 @@ void DepthCameraSubscriber::handleObjectAppearance(const std::vector<int> &count
             // Object seen for 15 minutes, consider it as people
             RCLCPP_INFO(this->get_logger(), "Object identified as people.");
         }
-        else if (total_count ==3 )
+        else if (total_count ==2 )
         {
             // Object seen for less than 30 minutes, consider it as trolley
             RCLCPP_INFO(this->get_logger(), "Object identified as trolley.");

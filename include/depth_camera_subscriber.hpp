@@ -36,7 +36,7 @@
 #include "pcl/common/transforms.h"
 
 #include <vector>
-//#include "gnuplot-iostream.h"
+
 
 
 typedef pcl::PointXYZ PointT;
@@ -117,7 +117,7 @@ private:
   std::array<float, 2> origin_pixel;
 
   size_t count_;
-  rclcpp::Rate rate{1}; //calls callback 2 times per second
+  rclcpp::Rate rate{0.2}; //calls callback 2 times per second
 
 
   std::deque<nav_msgs::msg::OccupancyGrid> modified_map_buffer_;
