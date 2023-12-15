@@ -34,12 +34,14 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include <geometry_msgs/msg/point.hpp>
 
+#include <Eigen/Geometry>
+
 typedef pcl::PointXYZ PointT;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudT;
 
 DepthCameraSubscriber::DepthCameraSubscriber()
     : Node("depth_camera_subscriber"), count_(0), tf_buffer_(std::make_shared<tf2_ros::Buffer>(this->get_clock())), tf_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_buffer_))
-{ 
+{
   point_cloud_subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
       "/camera/right_camera/depth/color/points", rclcpp::SensorDataQoS(),
       [this](const sensor_msgs::msg::PointCloud2::SharedPtr pc_in)
@@ -54,24 +56,25 @@ DepthCameraSubscriber::DepthCameraSubscriber()
         this->combined_callback(nullptr, map_in);
       });
 
- // timer_ = this->create_wall_timer(std::chrono::minutes(1), std::bind(&DepthCameraSubscriber::timerCallback, this));
+  // timer_ = this->create_wall_timer(std::chrono::minutes(1), std::bind(&DepthCameraSubscriber::timerCallback, this));
 
   cloud_in_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("point_cloud_in", rclcpp::SensorDataQoS());
   cloud_projected_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_projected", rclcpp::SensorDataQoS());
   cloud_filtered_distance_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_filtered", rclcpp::SensorDataQoS());
-  cloud_transformed_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_transformed", rclcpp::SensorDataQoS());
-  cloud_transformed_member_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_transformed_member", rclcpp::SensorDataQoS());
+  cloud_transformed_member_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("cloud_transformed", rclcpp::SensorDataQoS());
 
   map_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("cloud_map_in", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
-  modified_map_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("modified_map", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+  modified_map_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("detected_object_grid", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
   buffer_modified_map_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("buffer_modified_map", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
+
+  marker_publisher_ = create_publisher<visualization_msgs::msg::Marker>("transformed_point_marker", 10);
 }
 
 void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud2::SharedPtr pc_in, const nav_msgs::msg::OccupancyGrid::SharedPtr map_in)
 {
   if (pc_in != nullptr)
   {
-   //std::cout << "pc_in is loaded" << std::endl;
+    // std::cout << "pc_in is loaded" << std::endl;
     sensor_msgs::msg::PointCloud2 output;
     output.header = pc_in->header;
 
@@ -104,7 +107,7 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
     pcl::toROSMsg(*cloud_projected, output); // convert PC to ROS message
     cloud_projected_publisher_->publish(output);
 
-    // removed points which are mor ethan 3 meters far away
+    // removed points which are mor ethan 2 meters far away
     PointCloudT::Ptr cloud_filtered(new PointCloudT);
     float max_distance_threshold = 2.0; // distance from camera
 
@@ -114,7 +117,7 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
 
       if (distance_2d <= max_distance_threshold)
       {
-        cloud_filtered->push_back(point);                                                       
+        cloud_filtered->push_back(point);
       }
     }
     sensor_msgs::msg::PointCloud2 output_1;
@@ -164,10 +167,10 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
     PointCloudT::Ptr cloud_transformed(new PointCloudT);
     const std::string &destination_frame_id = "map";
     const std::string &current_frame_id = "right_camera_depth_optical_frame";
-    is_transformed = findTransformation(current_frame_id, destination_frame_id, cloud_transformed, transform);
+    is_transformed = findCameraToMapTransformation(current_frame_id, destination_frame_id, cloud_transformed, transform_1);
     if (continue_callback)
     {
-     // std::cout << "point cloud is transformed to the map frame" << std::endl;
+      // std::cout << "point cloud is transformed to the map frame" << std::endl;
       *cloud_transformed_member_ = *cloud_transformed;
 
       sensor_msgs::msg::PointCloud2 output_2;
@@ -178,33 +181,25 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
       // convert 1D pointcloud to image
       //  convert1DArrayTo2DImage(cloud_transformed_member_);
 
- //  size_t number_of_points = cloud_transformed_member_->points.size();
-// std::cout<<"point cloud size is: " <<number_of_points<< std::endl;
+      //  size_t number_of_points = cloud_transformed_member_->points.size();
+      // std::cout<<"point cloud size is: " <<number_of_points<< std::endl;
 
- std::vector<float> distances = findNearestOccupiedDistance(cloud_transformed_member_);
+      std::vector<float> distances = findNearestOccupiedDistance(cloud_transformed_member_);
+      writeDistancesToFile(distances);
 
-writeDistancesToFile(distances); 
+      nav_msgs::msg::OccupancyGrid modified_map;
+      modified_map = objectDetection(cloud_transformed_member_);
+      modified_map_publisher_->publish(modified_map);
 
-  nav_msgs::msg::OccupancyGrid modified_map;
-  modified_map = objectDetection(cloud_transformed_member_);
-  modified_map_publisher_->publish(modified_map);
+      // printCameraToMapTransform(camera_to_map_transform_);
 
+      // map_to_robot_base_transform_= findMapToRobotBaseTransform(camera_to_map_transform_);
+      // printMapToRobotBaseTransform(map_to_robot_base_transform_);
 
+      // bool is_transformation_available = findMapToRobotBaseTransformation(transform_2);
+      // printMapToRobotBaseTransform(map_to_robot_base_transform_);
 
-
-
-
-
-   
-
-    
-
-
-timerCallback();
-
-
-
-
+      determineObjectType();
 
     } // continue_callback
 
@@ -217,91 +212,131 @@ timerCallback();
 
 
 
-void DepthCameraSubscriber::timerCallback()
+void DepthCameraSubscriber::determineObjectType()
 {
-    if (map_data_set)
+  nav_msgs::msg::OccupancyGrid modified_map;
+  modified_map = objectDetection(cloud_transformed_member_);
+
+  int min_object_pixels = 10;
+  bool has_object = hasObject(modified_map, min_object_pixels);
+
+  if (has_object)
+  {
+    // Calculate the centroid of the object in the map frame
+    geometry_msgs::msg::Point object_centroid_in_map_frame_image_coordinate = calculateCentroidInMapFrame(modified_map);
+    // std::cout << "object centroid in map frame in image coordinate: ( " << object_centroid_in_map_frame_image_coordinate.x << ", " << object_centroid_in_map_frame_image_coordinate.y << ")" <<std::endl;
+
+    geometry_msgs::msg::Point object_centroid_in_map_frame_ros_coordinate = transformImgCoordinateToRos(map_in_->info.origin.position.x, map_in_->info.origin.position.y, map_in_->info.resolution,
+                                                                                                        map_in_->info.height, object_centroid_in_map_frame_image_coordinate.x, object_centroid_in_map_frame_image_coordinate.y);
+
+    // std::cout << "object centroid in map frame in ros coordinate: ( " << object_centroid_in_map_frame_ros_coordinate.x << ", " << object_centroid_in_map_frame_ros_coordinate.y << ")" << std::endl;
+
+    geometry_msgs::msg::Transform map_to_robot_base_transform = findMapToRobotBaseTransformation(transform_2);
+    geometry_msgs::msg::Point object_centroid_in_robot_base_frame = transformCentroidPointToRobotBase(object_centroid_in_map_frame_ros_coordinate, map_to_robot_base_transform);
+    std::cout << " New object centroid in robot base frame is (" << object_centroid_in_robot_base_frame.x << ", " << object_centroid_in_robot_base_frame.y << ", " << object_centroid_in_robot_base_frame.z << ")" << std::endl;
+
+    // Check if this is the first time the object is seen
+    if (timer_stamp_.seconds() == 0)
     {
-        nav_msgs::msg::OccupancyGrid modified_map;
-        modified_map = objectDetection(cloud_transformed_member_);
-        int min_object_pixels = 10;
-        //bool has_object = hasObject(modified_map, min_object_pixels);
+      // Save the centroid in ros_coor and update the timer
+      counts_.push_back(1);
+      std::cout << "1 added to counter" << std::endl;
+      first_time_object_seen_centroid_ros_ = object_centroid_in_map_frame_ros_coordinate;
+      // std::cout << " C1 centroid in ros map frame : ( " << first_time_object_seen_centroid_ros_.x << ", " << first_time_object_seen_centroid_ros_.y << ", " << first_time_object_seen_centroid_ros_.z << ")" << std::endl;
+      main_object_modified_map_ = modified_map;
+      timer_stamp_ = this->now();
+      std::cout << "First time object is seen. Timer started." << std::endl;
+    }
+    else
+    {
+      geometry_msgs::msg::Transform map_to_robot_base_transform = findMapToRobotBaseTransformation(transform_2);
+      // printMapToRobotBaseTransform(map_to_robot_base_transform_);
 
-        if (modified_map_buffer_.size() < buffer_size)
-        {
-            modified_map_buffer_.push_back(modified_map);
-            buffer_modified_map_publisher_->publish(modified_map);
-        }
-        else
-        {
-            modified_map_buffer_.pop_front();
-            modified_map_buffer_.push_back(modified_map);
-            buffer_modified_map_publisher_->publish(modified_map);
-        }
+      geometry_msgs::msg::Point c1_object_centroid_in_robot_base_frame;
+      c1_object_centroid_in_robot_base_frame = transformCentroidPointToRobotBase(first_time_object_seen_centroid_ros_, map_to_robot_base_transform);
+      std::cout << "Main object centroid in robot base frame is (" << c1_object_centroid_in_robot_base_frame.x << ", " << c1_object_centroid_in_robot_base_frame.y << ", " << c1_object_centroid_in_robot_base_frame.z << ")" << std::endl;
 
-        //std::cout << "Modified_map added to the buffer" << std::endl;
+      geometry_msgs::msg::Point base_origin_coordinate; // base_link origin coordinate
+      base_origin_coordinate.x = 0.0;
+      base_origin_coordinate.y = 0.0;
+      base_origin_coordinate.z = 0.0;
 
-        if (modified_map_buffer_.size() >= 2)
+      double distance = calculateDistance(c1_object_centroid_in_robot_base_frame, base_origin_coordinate);
+      std::cout << "Distance from main object : " << abs(distance) << std::endl;
+
+      double angle = calculateAngle(c1_object_centroid_in_robot_base_frame);
+      std::cout << "Angle for main object: " << abs(angle) << std::endl;
+
+      // Check the condition whether C1 is visible
+      if (std::abs(distance) < 2.0 && std::abs(angle) < (87.0 / 2.0))
+      {
+        std::cout << "Main object is visible "<< std::endl;
+        // Calculate the distance between the centroids
+        double centroids_differences = calculateDistance(c1_object_centroid_in_robot_base_frame, object_centroid_in_robot_base_frame);
+        std::cout << "Distance differences from objects centroids : " << centroids_differences << std::endl;
+
+        // Check if the centroids are close enough
+        double distance_threshold = 0.1; // 10 cm
+        if (centroids_differences <= distance_threshold)
         {
+
+          // check from different POV
+          modified_map_buffer_.push_back(main_object_modified_map_);
+          modified_map_buffer_.push_back(modified_map);
+
+          if (modified_map_buffer_.size() >= 2)
+          {
             const nav_msgs::msg::OccupancyGrid &modified_map_1 = modified_map_buffer_[0];
             const nav_msgs::msg::OccupancyGrid &modified_map_2 = modified_map_buffer_[1];
 
-            int min_common_pixels = 8;
-            bool result = compareOccupancyGrids(modified_map_1, modified_map_2, min_common_pixels);
-
+            double percentage_threshold = 80; // 80% should be common
+            bool result = compareOccupancyGridsPOV(modified_map_1, modified_map_2, percentage_threshold);
             if (result)
             {
-                if (timer_stamp_.seconds() == 0)
+              std::cout << "The object is same from other POV." << std::endl;
+              std::cout << "---------------------------------------------" << std::endl;
+
+              rclcpp::Duration time_difference = this->now() - timer_stamp_;
+              if (time_difference.seconds() >= 60)
+              {
+                int intervals = static_cast<int>(time_difference.seconds()) / 60;
+                for (int i = 0; i < intervals; ++i)
                 {
                   counts_.push_back(1);
-
-                    // First time the object is seen, update the timer_stamp
-                    timer_stamp_ = this->now();
-                    std::cout << "First time object is seen. Timer started." << std::endl;
+                  std::cout << "1 added to counter" << std::endl;
                 }
-                else
-                {
-                    rclcpp::Duration time_difference = this->now() - timer_stamp_;
-                    if (time_difference.seconds() >= 60)
-                    {
-                        // Object is seen after at least 60 seconds, update count
-                        counts_.push_back(1);
-                        std::cout << "1 added to count" << std::endl;
-                        // Reset timer_stamp
-                        timer_stamp_ = this->now();
-                    }
-                    else
-                    {
-                        std::cout << "Object seen again within 60 seconds. Ignoring." << std::endl;
-                    }
-                }
+                timer_stamp_ = this->now();
+                modified_map_buffer_.clear();
+              }
+              else
+              {
+                std::cout << "Object seen again within 60 seconds. Ignoring." << std::endl;
+              }
             }
-            else
-            {
-                
-                if (!counts_.empty() && !has_object)
-                {
-                    handleObjectAppearance(counts_);
-                    counts_.clear();        // Reset counts_ for the next object
-                    timer_stamp_ = rclcpp::Time(0, 0);     // reset the time_stamp
-                    modified_map_buffer_.clear();
-                }
-            }
-
-              // Object is continuously visible for more than 2 hours
-            if (counts_.size() >= 6 )
-            {
-                std::cout << "Object continuously visible for more than. Running handle function." << std::endl;
-                handleObjectAppearance(counts_);
-            }
+          }
         }
+        else
+        {
+          handleObjectAppearance(counts_);
+          counts_.clear();                   // Reset counts_ for the next object
+          timer_stamp_ = rclcpp::Time(0, 0); // Reset the timer_stamp
+        }
+        if (counts_.size() >= 8)
+        {
+          std::cout << "Object continuously visible for more than 8 unit time (2 hours). Running handle function." << std::endl;
+          handleObjectAppearance(counts_);
+          counts_.clear();                   // Reset counts_ for the next object
+          timer_stamp_ = rclcpp::Time(0, 0); // Reset the timer_stamp
+        }
+      }
+      else
+      {
+        std::cout << "Main object is not visible." << std::endl;
+        std::cout << " ---------------------------------------------------------------------------- " << std::endl;
+      }
     }
+  }
 }
-
-
-
-
-
-
 
 
 
@@ -330,8 +365,7 @@ void DepthCameraSubscriber::saveMapAsPGM(const nav_msgs::msg::OccupancyGrid::Sha
   }
 }
 
-
-bool DepthCameraSubscriber::findTransformation(std::string current_frame_id, std::string destination_frame_id, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform)
+bool DepthCameraSubscriber::findCameraToMapTransformation(std::string current_frame_id, std::string destination_frame_id, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform)
 {
   // Return of pointcloud is empty
   if (cloud_filtered_member_->points.size() == 0)
@@ -342,8 +376,10 @@ bool DepthCameraSubscriber::findTransformation(std::string current_frame_id, std
 
   try
   {
-
     transform = tf_buffer_->lookupTransform(destination_frame_id, current_frame_id, tf2::TimePointZero).transform;
+
+    // save as a class memebr
+    // camera_to_map_transform_ = transform;
 
     std::scoped_lock lock(lock_);
     getTransformedCloud(cloud_filtered_member_, cloud_transformed, transform);
@@ -373,15 +409,6 @@ void DepthCameraSubscriber::getTransformedCloud(pcl::PointCloud<PointT>::Ptr clo
   Eigen::Vector3f translation(transform.translation.x,
                               transform.translation.y,
                               transform.translation.z);
-  /**
-  // printout transformation matrix
-    Eigen::Matrix4f transform_matrix = Eigen::Matrix4f::Identity();
-    transform_matrix.block<3, 3>(0, 0) = rotation.toRotationMatrix();
-    transform_matrix.block<3, 1>(0, 3) = translation;
-
-    std::cout << "Transformation Matrix:" << std::endl;
-    std::cout << transform_matrix << std::endl;
-    **/
 
   if (cloud_filtered_member_->size() < 1)
   {
@@ -415,27 +442,8 @@ std::array<float, 2> DepthCameraSubscriber::calculatePointPixelValue(const Eigen
   return {x, y};
 }
 
-
-
-
-
-
-
 nav_msgs::msg::OccupancyGrid DepthCameraSubscriber::objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
 {
-  /**
-  // print out the map element
-  std::set<int> uniqueValues;
-      for(auto data : map_in_->data)
-     {
-         uniqueValues.insert(static_cast<int>(data));
-      }
-      for (int value : uniqueValues) {
-      std::cout << value << " ";
-      }
-      std::cout << std::endl;
-      **/
-
   nav_msgs::msg::OccupancyGrid modified_map;
   modified_map.info = map_in_->info;
   modified_map.header = map_in_->header;
@@ -449,22 +457,20 @@ nav_msgs::msg::OccupancyGrid DepthCameraSubscriber::objectDetection(const pcl::P
     int x = static_cast<int>(point_pixel[0]);
     int y = static_cast<int>(point_pixel[1]);
 
-    // std::cout<< "x:"<<x <<"  y:"<<y <<std::endl;
-
     if (x >= 1 && x < map_in_->info.width - 1 && y >= 1 && y < map_in_->info.height - 1)
     {
       bool isOccupied = false;
 
       // Check 10 neighboring points
-      for (int dx = -4; dx <= 4; ++dx)
+      for (int dx = -2; dx <= 2; ++dx)
       {
-        for (int dy = -4; dy <= 4; ++dy)
+        for (int dy = -2; dy <= 2; ++dy)
         {
           int nx = x + dx;
           int ny = y + dy;
 
           int index = map_in_->info.width * (map_in_->info.height - ny - 1) + nx;
-          if (map_in_->data[index] == 100 | map_in_->data[index] == -1)
+          if (map_in_->data[index] == 100 | map_in_->data[index] == -1) 
           {
             isOccupied = true;
             break;
@@ -475,30 +481,22 @@ nav_msgs::msg::OccupancyGrid DepthCameraSubscriber::objectDetection(const pcl::P
       if (isOccupied)
       {
         int index = map_in_->info.width * (map_in_->info.height - y - 1) + x;
-        modified_map.data[index] = 0; // Set corresponding cell as "unoccupied"
+        modified_map.data[index] = 0; 
       }
 
       else
       {
         int index = map_in_->info.width * (map_in_->info.height - y - 1) + x;
-        modified_map.data[index] = 100; // Set corresponding cell as "occupied"
+        modified_map.data[index] = 100; 
       }
     }
   }
-  geometry_msgs::msg::Point object_centroid = calculateCentroid(modified_map);
-  std::cout <<"Object centroid is (" << object_centroid.x << ", " << object_centroid.y << ")" << std::endl;
-
-
- // return std::make_pair(modified_map, object_centroid);
- return modified_map;
+  return modified_map;
 }
-
 
 std::vector<float> DepthCameraSubscriber::findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
 {
-  std::vector<float> distances; // Vector to store distance
-   // std::set<float> distances; 
-
+  std::vector<float> distances; 
   for (const pcl::PointXYZ &point : cloud->points)
   {
     Eigen::Vector3f position(point.x, point.y, point.z);
@@ -507,7 +505,7 @@ std::vector<float> DepthCameraSubscriber::findNearestOccupiedDistance(const pcl:
     int x = static_cast<int>(point_pixel[0]);
     int y = static_cast<int>(point_pixel[1]);
 
-float min_distance = std::numeric_limits<float>::max();
+    float min_distance = std::numeric_limits<float>::max();
 
     for (int dx = -20; dx <= 20; ++dx)
     {
@@ -535,305 +533,367 @@ float min_distance = std::numeric_limits<float>::max();
     if (min_distance != std::numeric_limits<float>::max())
     {
       distances.push_back(min_distance);
-       //distances.insert(min_distance);
     }
   }
-  
-  //for (const auto & distance : distances)
-  //{
-   // std::cout << "Distance: " << distance << std::endl;
-  //}
   return distances;
 }
 
-
-void DepthCameraSubscriber::writeDistancesToFile(const std::vector<float> & distances) 
+void DepthCameraSubscriber::writeDistancesToFile(const std::vector<float> &distances)
 {
-   const std::string& file_path = "src/depth_camera_subscriber/param/distances.txt";
-    std::ofstream outputFile(file_path);
+  const std::string &file_path = "src/depth_camera_subscriber/param/distances.txt";
+  std::ofstream outputFile(file_path);
 
-    if (outputFile.is_open()) {
-        for (const float& distance : distances) {
-            outputFile << distance << "\n"; 
-        }
-        outputFile.close();
-       // std::cout << "Distances are written to distances.txt " << std::endl;
-    } else {
-       // std::cerr << "Unable to open file for writing" << std::endl;
+  if (outputFile.is_open())
+  {
+    for (const float &distance : distances)
+    {
+      outputFile << distance << "\n";
     }
+    outputFile.close();
+    // std::cout << "Distances are written to distances.txt " << std::endl;
+  }
+  else
+  {
+    // std::cerr << "Unable to open file for writing" << std::endl;
+  }
 }
 
-
-
-bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid& occupancy_grid, int threshold) {
-    int occupied_count = 0;
-     for (int i = 0; i < occupancy_grid.data.size(); ++i)
+bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid &occupancy_grid, int threshold)
+{
+  int occupied_count = 0;
+  for (int i = 0; i < occupancy_grid.data.size(); ++i)
+  {
+    if (occupancy_grid.data[i] == 100)
     {
-        if (occupancy_grid.data[i] == 100)
-        {
-            occupied_count++;
-        }
+      occupied_count++;
     }
-        if (occupied_count >= threshold) {
-          
-          std::cout<<"Map has an object with " << occupied_count << " pixels. " << std::endl;
-            return true; 
-        }
-    
-              std::cout<<"Map with " << occupied_count << " pixels " << "is considered empty." <<std::endl;
-                  return false; 
+  }
+  if (occupied_count >= threshold)
+  {
+
+    std::cout << "Map has an object with " << occupied_count << " pixels. " << std::endl;
+    return true;
+  }
+
+  std::cout << "Map with " << occupied_count << " pixels "
+            << "is considered empty." << std::endl;
+  return false;
 }
 
-
-
-
-
-bool DepthCameraSubscriber::compareOccupancyGrids(const nav_msgs::msg::OccupancyGrid& grid1, const nav_msgs::msg::OccupancyGrid& grid2, int threshold)
+bool DepthCameraSubscriber::compareOccupancyGridsPOV(const nav_msgs::msg::OccupancyGrid &grid1, const nav_msgs::msg::OccupancyGrid &grid2, double percentage_threshold)
 {
-    if (grid1.info.width != grid2.info.width || grid1.info.height != grid2.info.height)
+  if (grid1.info.width != grid2.info.width || grid1.info.height != grid2.info.height)
+  {
+    return false;
+  }
+
+  int counter = 0;
+
+  int occupied_count_grid1 = 0;
+  int occupied_count_grid2 = 0;
+
+  for (int i = 0; i < grid1.data.size(); ++i)
+  {
+    if (grid1.data[i] == 100)
     {
-        return false;
+      occupied_count_grid1++;
     }
+  }
 
-    int counter = 0;
-
-    int occupied_count_grid1 = 0;
-    int occupied_count_grid2 = 0;
-
-    for (int i = 0; i < grid1.data.size(); ++i)
+  for (int i = 0; i < grid2.data.size(); ++i)
+  {
+    if (grid2.data[i] == 100)
     {
-        if (grid1.data[i] == 100)
-        {
-            occupied_count_grid1++;
-        }
+      occupied_count_grid2++;
     }
+  }
 
-    for (int i = 0; i < grid2.data.size(); ++i)
-    {
-        if (grid2.data[i] == 100)
-        {
-            occupied_count_grid2++;
-        }
-    }
+  int common_threshold = std::round(std::min(occupied_count_grid1, occupied_count_grid2) * (percentage_threshold / 100.0));
+  std::cout << "common_threshold is :" << common_threshold << std::endl;
 
-    if (occupied_count_grid1 > occupied_count_grid2)
+  if (occupied_count_grid1 > occupied_count_grid2)
+  {
+    for (int i = 1; i < grid2.info.width - 1; ++i)
     {
-        for (int i = 1; i < grid2.info.width - 1; ++i)
+      for (int j = 1; j < grid2.info.height - 1; ++j)
+      {
+        int index_2 = grid2.info.width * j + i;
+
+        if (grid2.data[index_2] == 100)
         {
-            for (int j = 1; j < grid2.info.height - 1; ++j)
+          int x = i;
+          int y = grid2.info.height - j - 1;
+
+          bool foundOccupied = false;
+
+          for (int dx = -occupied_count_grid1; dx <= occupied_count_grid1; ++dx)
+          {
+            for (int dy = -occupied_count_grid1; dy <= occupied_count_grid1; ++dy)
             {
-                int index_2 = grid2.info.width * j + i;
+              int nx = x + dx;
+              int ny = y + dy;
 
-                if (grid2.data[index_2] == 100)
-                {
-                    int x = i;
-                    int y = grid2.info.height - j - 1;
-
-                    bool foundOccupied = false;
-
-                    for (int dx = -occupied_count_grid1; dx <= occupied_count_grid1; ++dx)
-                    {
-                        for (int dy = -occupied_count_grid1; dy <= occupied_count_grid1; ++dy)
-                        {
-                            int nx = x + dx;
-                            int ny = y + dy;
-
-                            if (nx >= 0 && nx < grid1.info.width && ny >= 0 && ny < grid1.info.height)
-                            {
-                                int index_1 = grid1.info.width * (grid1.info.height - ny - 1) + nx;
-
-                                if (grid1.data[index_1] == 100)
-                                {
-                                    foundOccupied = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (foundOccupied)
-                        {
-                            break;
-                        }
-                    }
-
-                    if (foundOccupied)
-                    {
-                        counter++;
-                    }
-                }
-            }
-        }
-    }
-    else
-    {
-        for (int i = 1; i < grid1.info.width - 1; ++i)
-        {
-            for (int j = 1; j < grid1.info.height - 1; ++j)
-            {
-                int index_1 = grid1.info.width * j + i;
+              if (nx >= 0 && nx < grid1.info.width && ny >= 0 && ny < grid1.info.height)
+              {
+                int index_1 = grid1.info.width * (grid1.info.height - ny - 1) + nx;
 
                 if (grid1.data[index_1] == 100)
                 {
-                    int x = i;
-                    int y = grid1.info.height - j - 1;
-
-                    bool foundOccupied = false;
-
-                    for (int dx = -occupied_count_grid2; dx <= occupied_count_grid2; ++dx)
-                    {
-                        for (int dy = -occupied_count_grid2; dy <= occupied_count_grid2; ++dy)
-                        {
-                            int nx = x + dx;
-                            int ny = y + dy;
-
-                            if (nx >= 0 && nx < grid2.info.width && ny >= 0 && ny < grid2.info.height)
-                            {
-                                int index_2 = grid2.info.width * (grid2.info.height - ny - 1) + nx;
-
-                                if (grid2.data[index_2] == 100)
-                                {
-                                    foundOccupied = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (foundOccupied)
-                        {
-                            break;
-                        }
-                    }
-
-                    if (foundOccupied)
-                    {
-                        counter++;
-                    }
+                  foundOccupied = true;
+                  break;
                 }
+              }
             }
+            if (foundOccupied)
+            {
+              break;
+            }
+          }
+
+          if (foundOccupied)
+          {
+            counter++;
+          }
         }
+      }
     }
-
-    std::cout << "Occupied pixels in grid1: " << occupied_count_grid1 << std::endl;
-    std::cout << "Occupied pixels in grid2: " << occupied_count_grid2 << std::endl;
-    std::cout << "Number of common pixels is: " << counter << std::endl;
-    std::cout << "----------------------------------------------------------------------- " << std::endl;
-
-
-    return counter > threshold;
-}
-
-
-void DepthCameraSubscriber::handleObjectAppearance(const std::vector<int> &counts)
-    {
-
-        for (size_t i = 0; i < counts.size(); ++i)
-    {
-        RCLCPP_INFO(this->get_logger(), "Count[%zu]: %d", i, counts[i]);
-    }
-
-        int total_count = 0;
-        for (const auto &count : counts)
-        {
-            total_count += count;
-        }
-
-        // Make decisions based on the total count
-        if (total_count == 1 )
-        {
-            // Object seen for 15 minutes, consider it as people
-            RCLCPP_INFO(this->get_logger(), "Object identified as people.");
-        }
-        else if (total_count ==2 )
-        {
-            // Object seen for less than 30 minutes, consider it as trolley
-            RCLCPP_INFO(this->get_logger(), "Object identified as trolley.");
-        }
-        else if (total_count >= 6)
-        {
-            // Object seen for 2 hours, trigger map update
-            RCLCPP_INFO(this->get_logger(), "Object seen for 1.5 hours, triggering map update.");
-           
-        }
-    }
-
-
-geometry_msgs::msg::Point DepthCameraSubscriber::calculateCentroid(const nav_msgs::msg::OccupancyGrid &map)
-{
-  geometry_msgs::msg::Point centroid;
-  int totalOccupiedCells = 0;
-  float sumX = 0.0;
-  float sumY = 0.0;
-
-  for (int y = 0; y < map.info.height; ++y)
+  }
+  else
   {
-    for (int x = 0; x < map.info.width; ++x)
+    for (int i = 1; i < grid1.info.width - 1; ++i)
     {
-      int index = map.info.width * y + x;
-      if (map.data[index] == 100) // Check if cell is occupied
+      for (int j = 1; j < grid1.info.height - 1; ++j)
       {
-        sumX += x;
-        sumY += y;
-        ++totalOccupiedCells;
+        int index_1 = grid1.info.width * j + i;
+
+        if (grid1.data[index_1] == 100)
+        {
+          int x = i;
+          int y = grid1.info.height - j - 1;
+
+          bool foundOccupied = false;
+
+          for (int dx = -occupied_count_grid2; dx <= occupied_count_grid2; ++dx)
+          {
+            for (int dy = -occupied_count_grid2; dy <= occupied_count_grid2; ++dy)
+            {
+              int nx = x + dx;
+              int ny = y + dy;
+
+              if (nx >= 0 && nx < grid2.info.width && ny >= 0 && ny < grid2.info.height)
+              {
+                int index_2 = grid2.info.width * (grid2.info.height - ny - 1) + nx;
+
+                if (grid2.data[index_2] == 100)
+                {
+                  foundOccupied = true;
+                  break;
+                }
+              }
+            }
+            if (foundOccupied)
+            {
+              break;
+            }
+          }
+
+          if (foundOccupied)
+          {
+            counter++;
+          }
+        }
       }
     }
   }
 
-  if (totalOccupiedCells > 0)
+  std::cout << "Occupied pixels in grid1: " << occupied_count_grid1 << std::endl;
+  std::cout << "Occupied pixels in grid2: " << occupied_count_grid2 << std::endl;
+  std::cout << "Number of common pixels is: " << counter << " (" << (static_cast<double>(std::min(counter, common_threshold)) / common_threshold) * 100 << "%)" << std::endl;
+  return counter >= common_threshold; 
+}
+
+void DepthCameraSubscriber::handleObjectAppearance(const std::vector<int> &counts)
+{
+
+  for (size_t i = 0; i < counts.size(); ++i)
   {
-    centroid.x = sumX / totalOccupiedCells;
-    centroid.y = sumY / totalOccupiedCells;
+    RCLCPP_INFO(this->get_logger(), "Counter[%zu]: %d", i, counts[i]);
+  }
+  int total_count = 0;
+  for (const auto &count : counts)
+  {
+    total_count += count;
+  }
+  if (total_count == 1)
+  {
+    RCLCPP_INFO(this->get_logger(), "The object belongs to Group 1, including people or other robots.");
+  }
+  else if (total_count == 2)
+  {
+    RCLCPP_INFO(this->get_logger(), "The object belongs to Group 2, including trolley, forklift or shopping cart.");
+  }
+  else if (total_count >= 3)
+  {
+    
+    RCLCPP_INFO(this->get_logger(), "The object is identified as a static entity, and the map should be updated by adding this object into it.");
+  }
+}
+
+geometry_msgs::msg::Point DepthCameraSubscriber::calculateCentroidInMapFrame(const nav_msgs::msg::OccupancyGrid &grid)
+{
+  geometry_msgs::msg::Point centroid;
+  int total_occupied_cell = 0;
+  float sum_x = 0.0;
+  float sum_y = 0.0;
+
+  for (int y = 0; y < grid.info.height; ++y)
+  {
+    for (int x = 0; x < grid.info.width; ++x)
+    {
+      int index = grid.info.width * (grid.info.height - y - 1) + x;
+      if (grid.data[index] == 100)
+      {
+        sum_x += x;
+        sum_y += y;
+        ++total_occupied_cell;
+      }
+    }
+  }
+
+  if (total_occupied_cell > 0)
+  {
+    centroid.x = sum_x / total_occupied_cell;
+    centroid.y = sum_y / total_occupied_cell;
+    centroid.z = 0.0;
   }
 
   return centroid;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/**
-void DepthCameraSubscriber::convert1DArrayTo2DImage(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_transformed_member_)
+geometry_msgs::msg::Point DepthCameraSubscriber::transformCentroidPointToRobotBase(const geometry_msgs::msg::Point &object_centroid_in_map_frame, geometry_msgs::msg::Transform transform)
 {
-  std::vector<std::vector<unsigned char>> image(map_height, std::vector<unsigned char>(map_width, 0));
+  
+  Eigen::Vector4d object_centroid_vector;
+  object_centroid_vector << object_centroid_in_map_frame.x, object_centroid_in_map_frame.y, 0.0, 1.0;
 
-  for (const pcl::PointXYZ &point : cloud_transformed_member_->points)
-  {
-    Eigen::Vector3f position(point.x, point.y, point.z);
-    std::array<float, 2> point_pixel_value = calculatePointPixelValue(position, origin_pixel, resolution);
-    float x_px = static_cast<int>(point_pixel_value[0]);
-    float y_px = static_cast<int>(point_pixel_value[1]);
-    if (x_px >= 0 && x_px < map_width && y_px >= 0 && y_px < map_height)
-    {
-      image[y_px][x_px] = 255; // 255 for white
-    }
-  }
-  std::ofstream outfile("src/depth_camera_subscriber/param/point_cloud_2D.pgm", std::ios::out | std::ios::binary);
-  outfile << "P5\n"
-          << map_width << " " << map_height << "\n255\n";
+  // Extract rotation and translation
+  Eigen::Quaterniond rotation(transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z);
+  Eigen::Vector3d translation(transform.translation.x, transform.translation.y, transform.translation.z);
 
-  // Write the pixel data
-  for (int i = 0; i < map_height; i++)
-  {
-    for (int j = 0; j < map_width; j++)
-    {
-      outfile.put(static_cast<char>(image[i][j]));
-    }
-  }
-  outfile.close();
-  std::cout << "Point Cloud image saved as point_cloud_2D.pgm" << std::endl;
+  // Construct transformation matrix
+  Eigen::Affine3d transform_affine = Eigen::Translation3d(translation) * rotation;
+
+  // Apply transformation to the object centroid
+  Eigen::Vector4d point_in_robot_link_frame = transform_affine * object_centroid_vector;
+
+  // Extract the transformed coordinates
+  geometry_msgs::msg::Point point_in_robot_link_frame_msg;
+  point_in_robot_link_frame_msg.x = point_in_robot_link_frame(0);
+  point_in_robot_link_frame_msg.y = point_in_robot_link_frame(1);
+  point_in_robot_link_frame_msg.z = point_in_robot_link_frame(2);
+
+  return point_in_robot_link_frame_msg;
 }
-**/
+
+// Calculate distance of object centroid in map frame to transformed point in robot base frame
+double DepthCameraSubscriber::calculateDistance(const geometry_msgs::msg::Point &point1, const geometry_msgs::msg::Point &point2)
+{
+  double dx = point1.x - point2.x;
+  double dy = point1.y - point2.y;
+  double dz = point1.z - point2.z;
+
+  return sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+double DepthCameraSubscriber::calculateAngle(const geometry_msgs::msg::Point &centroid_in_robot_base_frame)
+{
+  // Calculate the vector components
+  double vector_x = centroid_in_robot_base_frame.x;
+  double vector_y = centroid_in_robot_base_frame.y;
+
+  double angle = std::atan2(vector_y, vector_x);
+
+  // Convert rad to degrees
+  angle = angle * (180.0 / M_PI);
+
+  return angle;
+}
+
+void DepthCameraSubscriber::printCameraToMapTransform(geometry_msgs::msg::Transform &transform)
+{
+  Eigen::Quaternion<float> rotation(transform.rotation.w,
+                                    transform.rotation.x,
+                                    transform.rotation.y,
+                                    transform.rotation.z);
+
+  Eigen::Vector3f translation(transform.translation.x,
+                              transform.translation.y,
+                              transform.translation.z);
+
+  Eigen::Matrix4f transform_matrix = Eigen::Matrix4f::Identity();
+  transform_matrix.block<3, 3>(0, 0) = rotation.toRotationMatrix();
+  transform_matrix.block<3, 1>(0, 3) = translation;
+
+  std::cout << "Camera To Map Transformation Matrix:" << std::endl;
+  std::cout << transform_matrix << std::endl;
+}
+
+geometry_msgs::msg::Transform DepthCameraSubscriber::findMapToRobotBaseTransformation(geometry_msgs::msg::Transform &transform)
+{
+  try
+  {
+    std::string current_frame_id = "map";
+    std::string destination_frame_id = "base_link";
+    transform = tf_buffer_->lookupTransform(destination_frame_id, current_frame_id, tf2::TimePointZero).transform;
+    return transform;
+  }
+
+  catch (tf2::TransformException &ex)
+  {
+    RCLCPP_ERROR(rclcpp::get_logger("tf_help"), "Exception in lookupTransform: %s", ex.what());
+  }
+}
+
+void DepthCameraSubscriber::printMapToRobotBaseTransform(geometry_msgs::msg::Transform &transform)
+{
+  Eigen::Quaternion<float> rotation(transform.rotation.w,
+                                    transform.rotation.x,
+                                    transform.rotation.y,
+                                    transform.rotation.z);
+
+  Eigen::Vector3f translation(transform.translation.x,
+                              transform.translation.y,
+                              transform.translation.z);
+
+  Eigen::Matrix4f transform_matrix = Eigen::Matrix4f::Identity();
+  transform_matrix.block<3, 3>(0, 0) = rotation.toRotationMatrix();
+  transform_matrix.block<3, 1>(0, 3) = translation;
+
+  std::cout << "Map To Robot Base Transformation Matrix" << std::endl;
+  std::cout << transform_matrix << std::endl;
+}
+
+// getting map origin in meter from map.yml
+geometry_msgs::msg::Point DepthCameraSubscriber::transformImgCoordinateToRos(double map_origin_x, double map_origin_y, double map_resolution, double map_height, double pixel_x, double pixel_y)
+{
+  double x = static_cast<double>(pixel_x);
+  double y = static_cast<double>(pixel_y);
+  double o_x = static_cast<double>(map_origin_x);
+  double o_y = static_cast<double>(map_origin_y);
+  double resolution = static_cast<double>(map_resolution);
+  double height = static_cast<double>(map_height);
+
+  geometry_msgs::msg::Point object_centroid_in_ros_map_frame;
+  object_centroid_in_ros_map_frame.x = round(x * resolution + o_x);
+  object_centroid_in_ros_map_frame.y = round(height * resolution - y * resolution + o_y);
+
+  return object_centroid_in_ros_map_frame;
+}
+
+
+
+
+
 
 
 /**
@@ -890,7 +950,6 @@ std::vector<std::vector<int8_t>> DepthCameraSubscriber::occupancyGridTo2DImage(c
 }
 **/
 
-
 /**
 std::vector<std::vector<int8_t>> DepthCameraSubscriber::convertTo2D(const std::vector<int8_t> &occupancy_grid, int width, int height)
 {
@@ -907,7 +966,6 @@ std::vector<std::vector<int8_t>> DepthCameraSubscriber::convertTo2D(const std::v
   return result;
 }
 **/
-
 
 /**
  pcl::PointCloud<pcl::PointXYZ>::Ptr DepthCameraSubscriber::removeGround(const pcl::PointCloud<pcl::PointXYZ>::Ptr &inputCloud, float minYValue)
