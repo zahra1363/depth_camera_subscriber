@@ -1,4 +1,3 @@
-#include "rclcpp/rclcpp.hpp"
 #include "depth_camera_subscriber.hpp"
 
 int main(int argc, char *argv[])
