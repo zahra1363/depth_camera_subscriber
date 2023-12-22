@@ -635,6 +635,7 @@ double DepthCameraSubscriber::calculateAngle(const geometry_msgs::msg::Point &ce
   return angle;
 }
 
+//Determine object type depends on the counter
 void DepthCameraSubscriber::determineObjectType(const std::vector<int> &counts)
 {
 
@@ -671,6 +672,7 @@ void DepthCameraSubscriber::determineObjectType(const std::vector<int> &counts)
   }
 }
 
+// Calculate the counter values for each object
 void DepthCameraSubscriber::calculateObjectTypeCount()
 {
   nav_msgs::msg::OccupancyGrid modified_map;

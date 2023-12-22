@@ -23,6 +23,7 @@
 
 typedef pcl::PointXYZ PointT;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudT;
+
 class DepthCameraSubscriber : public rclcpp::Node
 {
 public:
