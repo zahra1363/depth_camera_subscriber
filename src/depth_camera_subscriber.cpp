@@ -90,7 +90,7 @@ void DepthCameraSubscriber::combined_callback(const sensor_msgs::msg::PointCloud
   {
     RCLCPP_INFO(this->get_logger(), "Map is loaded");
     std::string map_path = "src/depth_camera_subscriber/param/map.pgm";
-    saveMapAsPGM(map_in, map_path);
+    //saveMapAsPGM(map_in, map_path);
 
     // Publish static map
     nav_msgs::msg::OccupancyGrid map_output;
