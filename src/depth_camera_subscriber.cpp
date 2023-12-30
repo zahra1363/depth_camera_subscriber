@@ -376,6 +376,7 @@ bool DepthCameraSubscriber::hasObject(const nav_msgs::msg::OccupancyGrid &occupa
   return false;
 }
 
+// Compares two occupancy grids, typically representing the same object observed from different robot points of view.
 bool DepthCameraSubscriber::compareOccupancyGridsFromDifferentRobotPOV(const nav_msgs::msg::OccupancyGrid &grid1, const nav_msgs::msg::OccupancyGrid &grid2, double percentage_threshold)
 {
   if (grid1.info.width != grid2.info.width || grid1.info.height != grid2.info.height)

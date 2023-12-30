@@ -29,16 +29,20 @@ class DepthCameraSubscriber : public rclcpp::Node
 public:
   DepthCameraSubscriber();
   void combined_callback(const sensor_msgs::msg::PointCloud2::SharedPtr pc_in, const nav_msgs::msg::OccupancyGrid::SharedPtr map_in);
+
   void saveMapAsPGM(const nav_msgs::msg::OccupancyGrid::SharedPtr map_msg, std::string file_path);
   std::array<float, 2> calculateMapOriginInPixel(const std::array<float, 2> &origin, float resolution, const std::array<int, 2> &image_size);
   bool findCameraToMapTransformation(std::string current_frame_id, std::string destination_frame_id, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform);
   void getTransformedCloud(pcl::PointCloud<PointT>::Ptr cloud_output, pcl::PointCloud<PointT>::Ptr cloud_transformed, geometry_msgs::msg::Transform &transform);
   std::array<float, 2> calculatePointPixelValue(const Eigen::Vector3f &position, const std::array<float, 2> &origin, float resolution);
+
   nav_msgs::msg::OccupancyGrid objectDetection(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
-  std::vector<float> findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
-  void writeDistancesToFile(const std::vector<float> &distances);
   bool hasObject(const nav_msgs::msg::OccupancyGrid &map, int threshold);
   bool compareOccupancyGridsFromDifferentRobotPOV(const nav_msgs::msg::OccupancyGrid &grid1, const nav_msgs::msg::OccupancyGrid &grid2, double percentage_threshold);
+
+  std::vector<float> findNearestOccupiedDistance(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
+  void writeDistancesToFile(const std::vector<float> &distances);
+
   geometry_msgs::msg::Point calculateCentroidInMapFrame(const nav_msgs::msg::OccupancyGrid &grid);
   geometry_msgs::msg::Point transformCentroidPointToRobotBase(const geometry_msgs::msg::Point &object_centroid_in_map_frame, geometry_msgs::msg::Transform map_to_robot_base_transform);
   double calculateDistance(const geometry_msgs::msg::Point &point1, const geometry_msgs::msg::Point &point2);
@@ -48,6 +52,7 @@ public:
   geometry_msgs::msg::Point transformImgCoordinateToRos(double o_x, double o_y, double resolution, double height, double x, double y);
   void calculateObjectTypeCount();
   void determineObjectType(const std::vector<int> &counts);
+  
   nav_msgs::msg::OccupancyGrid::SharedPtr updateLocalMap(const nav_msgs::msg::OccupancyGrid &dynamic_object_map, const nav_msgs::msg::OccupancyGrid::SharedPtr &static_map);
 
 private:
